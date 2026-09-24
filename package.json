@@ -1,11 +1,11 @@
 {
   "name": "pi-tool-timeout",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
   "author": "GhabiX",
-  "description": "A timeout overlay for Pi foreground tools: omitted budget becomes 300s, explicit budgets are honored.",
+  "description": "Foreground timeout overlay for shell tools and built-in grep/find searches (omit=60s, max=2h).",
   "keywords": [
     "pi-package"
   ],
@@ -27,7 +27,7 @@
     "test:e2e": "node --experimental-strip-types --test test/e2e-runtime.test.mjs"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.85.1 <0.86.0",
+    "@earendil-works/pi-coding-agent": ">=0.87.1 <0.88.0",
     "typebox": "^1.3.7"
   },
   "files": [

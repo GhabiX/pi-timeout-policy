@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const PLUGIN = join(import.meta.dirname, "..");
 
@@ -15,7 +15,15 @@ function resolvePiIndex() {
 }
 
 const PI_INDEX = pathToFileURL(resolvePiIndex()).href;
+const PI_AI_INDEX = pathToFileURL(
+  join(dirname(fileURLToPath(PI_INDEX)), "..", "node_modules/@earendil-works/pi-ai/dist/index.js"),
+).href;
+const GOOGLE_SHARED_INDEX = pathToFileURL(
+  join(dirname(fileURLToPath(PI_AI_INDEX)), "api/google-shared.js"),
+).href;
 const pi = await import(PI_INDEX);
+const piAi = await import(PI_AI_INDEX);
+const googleShared = await import(GOOGLE_SHARED_INDEX);
 const policy = await import(pathToFileURL(join(PLUGIN, "extensions/timeout-policy.ts")).href);
 
 function schemaProperties(schema) {
@@ -45,13 +53,13 @@ async function loadPlugin() {
   );
 }
 
-async function createIsolatedSession(tools) {
+async function createIsolatedSession(tools, { withPlugin = true } = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "pi-timeout-e2e-"));
   const agentDir = join(cwd, "agent");
   await mkdir(agentDir, { recursive: true });
   await writeFile(join(cwd, "needle.txt"), "alpha-timeout-token\n");
 
-  const settingsManager = pi.SettingsManager.inMemory({ packages: [await realpath(PLUGIN)] });
+  const settingsManager = pi.SettingsManager.inMemory({ packages: withPlugin ? [await realpath(PLUGIN)] : [] });
   const resourceLoader = new pi.DefaultResourceLoader({ cwd, agentDir, settingsManager });
   await resourceLoader.reload();
   const { session } = await pi.createAgentSession({
@@ -67,33 +75,55 @@ async function createIsolatedSession(tools) {
   return { cwd, session, extensions: resourceLoader.getExtensions() };
 }
 
-test("factory load does not register tools; overlay waits for session_start", async () => {
+async function shutdownSession(session, reason = "quit") {
+  await session._extensionRunner.emit({ type: "session_shutdown", reason });
+  session.dispose?.();
+}
+
+function assertAlignedNativeTimeoutSchema(definition) {
+  const timeout = schemaProperties(definition.parameters).timeout;
+  assert.equal(timeout.type, "number");
+  assert.equal(timeout.description, policy.TIMEOUT_PARAMETER_DESCRIPTION);
+  assert.equal(timeout.exclusiveMinimum, 0);
+  assert.equal(timeout.maximum, 7200);
+  assert.equal(definition.parameters.required?.includes("timeout") ?? false, false);
+}
+
+test("factory load registers no tools; grep/find overlay waits for session_start", async () => {
   const loaded = await loadPlugin();
   assert.deepEqual(loaded.errors, []);
   assert.equal(loaded.extensions.length, 1);
 
   const ext = loaded.extensions[0];
-  assert.deepEqual([...ext.tools.keys()], []);
+  assert.deepEqual(
+    [...ext.tools.keys()],
+    [],
+  );
   assert.equal(ext.handlers.has("session_start"), true);
+  assert.equal(ext.handlers.has("session_shutdown"), true);
   assert.equal(ext.handlers.has("tool_call"), true);
   assert.equal(ext.handlers.has("before_agent_start"), true);
 });
 
-test("tool_call fills bash/powershell default 300 and preserves explicit values", async () => {
+test("tool_call fills bash/powershell default 60, preserves explicit values, blocks over 2h", async () => {
   const loaded = await loadPlugin();
   const handler = loaded.extensions[0].handlers.get("tool_call")[0];
 
   const omitted = { command: "true" };
-  await handler({ toolName: "bash", input: omitted });
-  assert.equal(omitted.timeout, 300);
+  assert.equal(await handler({ toolName: "bash", input: omitted }), undefined);
+  assert.equal(omitted.timeout, 60);
 
   const explicit = { command: "true", timeout: 12 };
-  await handler({ toolName: "bash", input: explicit });
+  assert.equal(await handler({ toolName: "bash", input: explicit }), undefined);
   assert.equal(explicit.timeout, 12);
 
   const pwsh = { command: "true" };
   await handler({ toolName: "powershell", input: pwsh });
-  assert.equal(pwsh.timeout, 300);
+  assert.equal(pwsh.timeout, 60);
+
+  const blocked = await handler({ toolName: "bash", input: { command: "true", timeout: 7201 } });
+  assert.equal(blocked.block, true);
+  assert.match(blocked.reason, /7200/);
 
   const grepInput = { pattern: "x" };
   await handler({ toolName: "grep", input: grepInput });
@@ -131,15 +161,18 @@ test("overlay does not enable grep/find on the default tool set", async () => {
     assert.deepEqual(active.includes("bash"), true);
     assert.equal(active.includes("grep"), false);
     assert.equal(active.includes("find"), false);
-
     const grepDef = session.getToolDefinition("grep");
     const findDef = session.getToolDefinition("find");
     const bashDef = session.getToolDefinition("bash");
     assert.equal(schemaProperties(grepDef.parameters).timeout.type, "number");
     assert.equal(schemaProperties(findDef.parameters).timeout.type, "number");
-    assert.match(JSON.stringify(schemaProperties(bashDef.parameters).timeout), /no default timeout/);
-    assert.equal(/grep calls default to 300s/.test(session.systemPrompt ?? ""), false);
-    assert.equal(/find calls default to 300s/.test(session.systemPrompt ?? ""), false);
+    assertAlignedNativeTimeoutSchema(bashDef);
+    const powershellDef = session.getToolDefinition("powershell");
+    if (powershellDef) assertAlignedNativeTimeoutSchema(powershellDef);
+    await session._extensionRunner.emit({ type: "session_start", reason: "startup" });
+    assertAlignedNativeTimeoutSchema(session.getToolDefinition("bash"));
+    assert.equal(/grep calls default to 60s/.test(session.systemPrompt ?? ""), false);
+    assert.equal(/find calls default to 60s/.test(session.systemPrompt ?? ""), false);
 
     const injected = await session._extensionRunner.emitBeforeAgentStart(
       "probe",
@@ -147,13 +180,59 @@ test("overlay does not enable grep/find on the default tool set", async () => {
       session.systemPrompt ?? "base",
       { cwd, selectedTools: active, promptGuidelines: [] },
     );
-    assert.match(injected.systemPrompt, /bash calls default to 300s/);
-    assert.equal(/grep calls default to 300s/.test(injected.systemPrompt), false);
+    assert.match(injected.systemPrompt, /bash calls default to 60s/);
+    assert.equal(/background_job/.test(injected.systemPrompt), false);
+    assert.equal(/grep calls default to 60s/.test(injected.systemPrompt), false);
 
     session.setActiveToolsByName([...active, "grep"]);
-    assert.match(session.systemPrompt ?? "", /grep calls default to 300s/);
+    assert.match(session.systemPrompt ?? "", /grep calls default to 60s/);
   } finally {
-    session.dispose?.();
+    await shutdownSession(session);
+  }
+});
+
+test("native timeout validation uses the aligned live schema", async () => {
+  const { session } = await createIsolatedSession(["bash"]);
+  try {
+    const bashTool = session._toolRegistry.get("bash");
+    const powershellDef = session.getToolDefinition("powershell");
+    if (powershellDef) assertAlignedNativeTimeoutSchema(powershellDef);
+    assert.doesNotThrow(() => piAi.validateToolArguments(bashTool, { name: "bash", arguments: { command: "true" } }));
+    assert.doesNotThrow(() => piAi.validateToolArguments(bashTool, { name: "bash", arguments: { command: "true", timeout: 1800 } }));
+    assert.doesNotThrow(() => piAi.validateToolArguments(bashTool, { name: "bash", arguments: { command: "true", timeout: 7200 } }));
+    const converted = googleShared.convertTools([bashTool])[0].functionDeclarations[0].parametersJsonSchema;
+    assertAlignedNativeTimeoutSchema({ parameters: converted });
+    for (const timeout of [0, -1, 7201]) {
+      assert.throws(
+        () => piAi.validateToolArguments(bashTool, { name: "bash", arguments: { command: "true", timeout } }),
+        /Validation failed/,
+      );
+    }
+  } finally {
+    await shutdownSession(session);
+  }
+});
+
+test("native schema alignment is restored before a no-plugin session", async () => {
+  const pluginSession = await createIsolatedSession(["bash"]);
+  try {
+    assertAlignedNativeTimeoutSchema(pluginSession.session.getToolDefinition("bash"));
+    await shutdownSession(pluginSession.session);
+  } catch (error) {
+    pluginSession.session.dispose?.();
+    throw error;
+  }
+
+  const cleanSession = await createIsolatedSession(["bash"], { withPlugin: false });
+  try {
+    const timeout = schemaProperties(cleanSession.session.getToolDefinition("bash").parameters).timeout;
+    assert.equal(timeout.type, "number");
+    assert.equal(timeout.description, "Timeout in seconds (optional, no default timeout)");
+    assert.equal(Object.hasOwn(timeout, "exclusiveMinimum"), false);
+    assert.equal(Object.hasOwn(timeout, "maximum"), false);
+    assert.equal(cleanSession.extensions.extensions.length, 0);
+  } finally {
+    cleanSession.session.dispose?.();
   }
 });
 
@@ -172,11 +251,11 @@ test("isolated Pi session overlays grep/find and executes bash/grep/find timeout
     const bashDef = session.getToolDefinition("bash");
     const grepDef = session.getToolDefinition("grep");
     const findDef = session.getToolDefinition("find");
-    assert.match(JSON.stringify(schemaProperties(bashDef.parameters).timeout), /no default timeout/);
+    assertAlignedNativeTimeoutSchema(bashDef);
     assert.equal(schemaProperties(grepDef.parameters).timeout.type, "number");
     assert.equal(schemaProperties(findDef.parameters).timeout.type, "number");
-    assert.match(grepDef.description, /300s timeout/);
-    assert.match(findDef.description, /300s timeout/);
+    assert.match(grepDef.description, /60s timeout/);
+    assert.match(findDef.description, /60s timeout/);
     assert.deepEqual(Object.keys(schemaProperties(grepDef.parameters)), [
       "pattern",
       "path",
@@ -187,9 +266,9 @@ test("isolated Pi session overlays grep/find and executes bash/grep/find timeout
       "limit",
       "timeout",
     ]);
-    assert.match(session.systemPrompt ?? "", /grep calls default to 300s/);
-    assert.match(session.systemPrompt ?? "", /find calls default to 300s/);
-    assert.equal(/bash calls default to 300s/.test(session.systemPrompt ?? ""), false);
+    assert.match(session.systemPrompt ?? "", /grep calls default to 60s/);
+    assert.match(session.systemPrompt ?? "", /find calls default to 60s/);
+    assert.equal(/bash calls default to 60s/.test(session.systemPrompt ?? ""), false);
 
     const injected = await session._extensionRunner.emitBeforeAgentStart(
       "probe",
@@ -209,7 +288,7 @@ test("isolated Pi session overlays grep/find and executes bash/grep/find timeout
       args: omitted,
     });
     assert.equal(block, undefined);
-    assert.equal(omitted.timeout, 300);
+    assert.equal(omitted.timeout, 60);
 
     const bashOk = await withTimeout(
       bashTool.execute("bash-ok", { command: "echo ok-timeout", timeout: 2 }),
@@ -265,7 +344,7 @@ test("isolated Pi session overlays grep/find and executes bash/grep/find timeout
     setTimeout(() => parent.abort(new Error("parent cancelled")), 150);
     await assert.rejects(() => withTimeout(pending, 5000, "grep parent cancel"), (error) => {
       assert.equal(/timed out/i.test(error.message), false);
-      assert.match(error.message, /aborted/i);
+      assert.match(error.message, /aborted|parent cancelled/i);
       return true;
     });
 
@@ -290,6 +369,6 @@ test("isolated Pi session overlays grep/find and executes bash/grep/find timeout
       /Invalid timeout/,
     );
   } finally {
-    session.dispose?.();
+    await shutdownSession(session);
   }
 });
