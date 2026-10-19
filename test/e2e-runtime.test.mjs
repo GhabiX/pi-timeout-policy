@@ -80,6 +80,12 @@ async function shutdownSession(session, reason = "quit") {
   session.dispose?.();
 }
 
+// Pi 1.3 renders the prompt from options; a before_agent_start result's systemPrompt becomes forceSystemPrompt.
+async function injectedSystemPrompt(session, systemPromptOptions) {
+  const result = await session._extensionRunner.emitBeforeAgentStart({ messageType: "user", prompt: "probe" }, systemPromptOptions);
+  return result.systemPromptOptions.forceSystemPrompt;
+}
+
 function assertAlignedNativeTimeoutSchema(definition) {
   const timeout = schemaProperties(definition.parameters).timeout;
   assert.equal(timeout.type, "number");
@@ -174,15 +180,10 @@ test("overlay does not enable grep/find on the default tool set", async () => {
     assert.equal(/grep calls default to 60s/.test(session.systemPrompt ?? ""), false);
     assert.equal(/find calls default to 60s/.test(session.systemPrompt ?? ""), false);
 
-    const injected = await session._extensionRunner.emitBeforeAgentStart(
-      "probe",
-      undefined,
-      session.systemPrompt ?? "base",
-      { cwd, selectedTools: active, promptGuidelines: [] },
-    );
-    assert.match(injected.systemPrompt, /bash calls default to 60s/);
-    assert.equal(/background_job/.test(injected.systemPrompt), false);
-    assert.equal(/grep calls default to 60s/.test(injected.systemPrompt), false);
+    const injected = await injectedSystemPrompt(session, { cwd, selectedTools: active, promptGuidelines: [] });
+    assert.match(injected, /bash calls default to 60s/);
+    assert.equal(/background_job/.test(injected), false);
+    assert.equal(/grep calls default to 60s/.test(injected), false);
 
     session.setActiveToolsByName([...active, "grep"]);
     assert.match(session.systemPrompt ?? "", /grep calls default to 60s/);
@@ -200,8 +201,18 @@ test("native timeout validation uses the aligned live schema", async () => {
     assert.doesNotThrow(() => piAi.validateToolArguments(bashTool, { name: "bash", arguments: { command: "true" } }));
     assert.doesNotThrow(() => piAi.validateToolArguments(bashTool, { name: "bash", arguments: { command: "true", timeout: 1800 } }));
     assert.doesNotThrow(() => piAi.validateToolArguments(bashTool, { name: "bash", arguments: { command: "true", timeout: 7200 } }));
-    const converted = googleShared.convertTools([bashTool])[0].functionDeclarations[0].parametersJsonSchema;
+    // Non-strict providers receive the aligned optional schema unchanged.
+    const converted = googleShared.convertTools([bashTool], false, false)[0].functionDeclarations[0].parametersJsonSchema;
     assertAlignedNativeTimeoutSchema({ parameters: converted });
+    // Strict providers (Gemini 3+) declare it required and nullable; validation drops null before the 60s fill.
+    const strict = googleShared.convertTools([bashTool], false, true)[0].functionDeclarations[0].parametersJsonSchema;
+    assert.equal(strict.required.includes("timeout"), true);
+    assertAlignedNativeTimeoutSchema({ parameters: { properties: { timeout: strict.properties.timeout.anyOf[0] } } });
+    assert.deepEqual(strict.properties.timeout.anyOf[1], { type: "null" });
+    assert.deepEqual(
+      piAi.validateToolArguments(bashTool, { name: "bash", arguments: { command: "true", timeout: null } }),
+      { command: "true" },
+    );
     for (const timeout of [0, -1, 7201]) {
       assert.throws(
         () => piAi.validateToolArguments(bashTool, { name: "bash", arguments: { command: "true", timeout } }),
@@ -270,13 +281,12 @@ test("isolated Pi session overlays grep/find and executes bash/grep/find timeout
     assert.match(session.systemPrompt ?? "", /find calls default to 60s/);
     assert.equal(/bash calls default to 60s/.test(session.systemPrompt ?? ""), false);
 
-    const injected = await session._extensionRunner.emitBeforeAgentStart(
-      "probe",
-      undefined,
-      session.systemPrompt ?? "base",
-      { cwd, promptGuidelines: [], selectedTools: ["bash", "grep", "find"] },
-    );
-    assert.equal(injected.systemPrompt.includes(policy.toolTimeoutGuideline("bash")), true);
+    const injected = await injectedSystemPrompt(session, {
+      cwd,
+      promptGuidelines: [],
+      selectedTools: ["bash", "grep", "find"],
+    });
+    assert.equal(injected.includes(policy.toolTimeoutGuideline("bash")), true);
 
     const bashTool = session._toolRegistry.get("bash");
     const grepTool = session._toolRegistry.get("grep");

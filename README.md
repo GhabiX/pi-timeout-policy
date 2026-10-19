@@ -5,7 +5,7 @@ Pi coding-agent extension for one timeout policy over foreground execution.
 > **No explicit budget -> 60s. This turn needs stdout/exit beyond 60s -> explicit timeout, max 7200s (2h).**
 > **This turn does not need stdout/exit -> use an installed background-job capability. Outlive Pi -> systemd/tmux.**
 
-Compatible with `@earendil-works/pi-coding-agent` `>=0.87.1 <0.88.0`.
+Tested with `@earendil-works/pi-coding-agent` 1.3.0. Host packages are `"*"` peer dependencies, as Pi requires.
 
 ## Design
 
@@ -63,7 +63,7 @@ npm test
 npm run test:e2e
 ```
 
-Requires Node `>=22.19.0`. `npm test` covers the timeout policy and overlay helpers. `npm run test:e2e` loads the extension through a local Pi 0.87.1 install.
+Requires Node `>=22.19.0`. `npm test` covers the timeout policy and overlay helpers. `npm run test:e2e` loads the extension through the `pi` install on `PATH` (1.3.0).
 
 ## License
 
