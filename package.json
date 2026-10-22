@@ -1,26 +1,40 @@
 {
-  "name": "pi-tool-timeout",
+  "name": "@spinetree/pi-timeout-policy",
   "version": "0.4.0",
-  "private": true,
   "type": "module",
+  "description": "One timeout policy for Pi's foreground tools: 60s when unset, 2h at most, and timeouts for grep and find too.",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "pi-extension",
+    "timeout",
+    "bash",
+    "grep"
+  ],
   "license": "Apache-2.0",
   "author": "GhabiX",
-  "description": "Foreground timeout overlay for shell tools and built-in grep/find searches (omit=60s, max=2h).",
-  "keywords": [
-    "pi-package"
-  ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GhabiX/pi-tool-timeout.git"
+    "url": "git+https://github.com/GhabiX/pi-timeout-policy.git"
   },
   "bugs": {
-    "url": "https://github.com/GhabiX/pi-tool-timeout/issues"
+    "url": "https://github.com/GhabiX/pi-timeout-policy/issues"
   },
-  "homepage": "https://github.com/GhabiX/pi-tool-timeout#readme",
+  "homepage": "https://github.com/GhabiX/pi-timeout-policy#readme",
   "pi": {
     "extensions": [
       "./extensions/tool-timeout.ts"
     ]
+  },
+  "files": [
+    "extensions",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "test": "node --experimental-strip-types --test test/timeout-policy.test.mjs",
@@ -30,11 +44,6 @@
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"
   },
-  "files": [
-    "extensions",
-    "README.md",
-    "LICENSE"
-  ],
   "engines": {
     "node": ">=22.19.0"
   }

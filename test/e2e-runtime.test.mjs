@@ -1,26 +1,30 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 const PLUGIN = join(import.meta.dirname, "..");
 
-function resolvePiIndex() {
-  const piBin = execFileSync("which", ["pi"], { encoding: "utf8" }).trim();
-  return join(dirname(realpathSync(piBin)), "..", "index.js");
+// The pi on PATH is <package>/dist/bundle/cli.js.
+const PI_ROOT = join(dirname(realpathSync(execFileSync("which", ["pi"], { encoding: "utf8" }).trim())), "..", "..");
+
+/** Find Pi's dependency the way Node does: nested (global install) or hoisted (workspace). */
+function piDependency(name) {
+  for (let dir = PI_ROOT; ; dir = dirname(dir)) {
+    const candidate = join(dir, "node_modules", name);
+    if (existsSync(candidate)) return candidate;
+    if (dirname(dir) === dir) throw new Error(`${name} not found above ${PI_ROOT}`);
+  }
 }
 
-const PI_INDEX = pathToFileURL(resolvePiIndex()).href;
-const PI_AI_INDEX = pathToFileURL(
-  join(dirname(fileURLToPath(PI_INDEX)), "..", "node_modules/@earendil-works/pi-ai/dist/index.js"),
-).href;
-const GOOGLE_SHARED_INDEX = pathToFileURL(
-  join(dirname(fileURLToPath(PI_AI_INDEX)), "api/google-shared.js"),
-).href;
+const PI_INDEX = pathToFileURL(join(PI_ROOT, "dist/index.js")).href;
+const PI_AI_DIST = join(piDependency("@earendil-works/pi-ai"), "dist");
+const PI_AI_INDEX = pathToFileURL(join(PI_AI_DIST, "index.js")).href;
+const GOOGLE_SHARED_INDEX = pathToFileURL(join(PI_AI_DIST, "api/google-shared.js")).href;
 const pi = await import(PI_INDEX);
 const piAi = await import(PI_AI_INDEX);
 const googleShared = await import(GOOGLE_SHARED_INDEX);
