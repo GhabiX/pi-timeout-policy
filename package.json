@@ -1,5 +1,5 @@
 {
-  "name": "@spinetree/pi-timeout-policy",
+  "name": "@spinejit/pi-timeout-policy",
   "version": "0.4.0",
   "type": "module",
   "description": "One timeout policy for Pi's foreground tools: 60s when unset, 2h at most, and timeouts for grep and find too.",

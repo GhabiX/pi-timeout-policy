@@ -31,7 +31,7 @@ grep(pattern="foo", path=".", timeout=600) -> 600s
 ## Install
 
 ```sh
-pi install npm:@spinetree/pi-timeout-policy
+pi install npm:@spinejit/pi-timeout-policy
 ```
 
 If Pi is already running, restart it or run `/reload`.
@@ -39,7 +39,7 @@ If Pi is already running, restart it or run `/reload`.
 Try it for one session without installing:
 
 ```sh
-pi -e npm:@spinetree/pi-timeout-policy
+pi -e npm:@spinejit/pi-timeout-policy
 ```
 
 ## How it works
@@ -69,7 +69,7 @@ npm test          # timeout policy and overlay helpers
 npm run test:e2e  # loads the extension through the pi on PATH
 ```
 
-## More from @spinetree
+## More from @spinejit
 
 - [pi-background-job](https://github.com/GhabiX/pi-background-job): background jobs and output monitors that wake the agent when events occur.
 - [pi-btw-cached](https://github.com/GhabiX/pi-btw-cached): `/btw` side questions on the main session's own request.

@@ -31,7 +31,7 @@ grep(pattern="foo", path=".", timeout=600) -> 600s
 ## 安装
 
 ```sh
-pi install npm:@spinetree/pi-timeout-policy
+pi install npm:@spinejit/pi-timeout-policy
 ```
 
 Pi 已经在运行的话，重启它或执行 `/reload`。
@@ -39,7 +39,7 @@ Pi 已经在运行的话，重启它或执行 `/reload`。
 不安装，仅在当前会话中试用：
 
 ```sh
-pi -e npm:@spinetree/pi-timeout-policy
+pi -e npm:@spinejit/pi-timeout-policy
 ```
 
 ## 原理
@@ -69,7 +69,7 @@ npm test          # 超时规则和覆盖层辅助函数
 npm run test:e2e  # 通过 PATH 上的 pi 加载插件
 ```
 
-## @spinetree 的其他插件
+## @spinejit 的其他插件
 
 - [pi-background-job](https://github.com/GhabiX/pi-background-job)：后台任务与输出监视，事件发生时自动通知 agent。
 - [pi-btw-cached](https://github.com/GhabiX/pi-btw-cached)：在主会话自己的请求上发起 `/btw` 侧问。
